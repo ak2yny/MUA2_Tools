@@ -8,7 +8,6 @@ import glob
 from argparse import ArgumentParser
 from dataclasses import dataclass, InitVar
 from enum import Enum
-from itertools import count
 from pathlib import Path
 from struct import pack, iter_unpack, Struct, unpack_from
 
@@ -69,7 +68,7 @@ class PAK_Header:
     file_info_size: int = 0
     file_info_dtype: None|Struct = None
 
-    def __post_init__(self, _data):
+    def __post_init__(self, _data: bytes):
         self.version = PAK_Version(self.version)
         self.file_info_size = self.table_size - self.count * 4
         self.file_info_dtype = Struct(self.endian + self.version.file_info_dtype)
@@ -90,7 +89,7 @@ class PAK_Header:
 
 def backup(output_file: Path):
     if not output_file.exists(): return
-    for i in count(0):
+    for i in range(0xFFFFFFFF):
         backup_file = output_file.with_stem(f'{output_file.stem}.backup{i}')
         if not backup_file.exists(): break
     output_file.rename(backup_file)

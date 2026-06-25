@@ -49,12 +49,13 @@ IGZ_FU_TMET = 0x54454D54
 IGZ_FU_TMHN = 0x4E484D54
 IGZ_FU_TSTR = 0x52545354
 
-IGZ_IMG_FORMAT = { # WIP: Wrong, but works; doesn't depend on bitwidth?
-    0x883C45B2: noesis.NOESISTEX_DXT1,
-    0xB718471E: noesis.NOESISTEX_DXT5,
-    0x05ECD805: noesis.NOESISTEX_RGBA32
+IGZ_IMG_FORMAT = { # Wrong, but works; doesn't depend on bitwidth?
+    0x883C45B2: noesis.FOURCC_DXT1,
+    0xB718471E: noesis.FOURCC_DXT5,
+    0x05ECD805: noesis.FOURCC_ATI2, # ATI2N
+    0X26D53F6E: 'b8g8r8a8', #
+    0XD7B93585: 'b8g8r8a8'  # unknown what's the difference
 }
-IGZ_IMG_ONLY = False
 
 def registerNoesisTypes():
     igzHandle = noesis.register("Skylanders Superchargers", ".igz;.bld")
@@ -81,12 +82,11 @@ def alchemyigzLoadRGBA(data, texList):
     return alchemyigzLoadModel(data, texList)
 
 def alchemyigzLoadModel(data, mdlList):
-    ctx = rapi.rpgCreateContext()
-
     bs = NoeBitStream(data, IGZ_ENDIANNESS)
     bs.seek(4, NOESEEK_ABS)
     version = bs.readUInt()
 
+    ctx = rapi.rpgCreateContext()
     # ssa = 2011 Skylanders: Spyro's Adventure
     # sg  = 2012 Skylanders: Giants
     # ssf = 2013 Skylanders: Swap Force
@@ -112,7 +112,8 @@ def alchemyigzLoadModel(data, mdlList):
         raise Exception("Wii Models are not allowed as they are buggy, if you'd like to try them anyways, edit dAllowWii to \"True\" in fmt_alchemy_igz.py and restart Noesis")
 
     if dLoadAsImage and igz.isImageFile():
-        mdlList.extend(igz.textures)
+        for img in igz.textures.values():
+            mdlList.append(img)
     elif dLoadAsImage or igz.isImageFile():
         return 0
     elif dBuildMeshes:
@@ -127,6 +128,7 @@ class igzFile(object):
         rapi.rpgSetOption(noesis.RPGOPT_BIGENDIAN, IGZ_ENDIANNESS)
 
         self.pointers = []
+        self.rootPointers = []
         #self.pointerIDs = []
         self.stringList = []
         self.metatypes = []
@@ -136,7 +138,7 @@ class igzFile(object):
         self.models = []
         self.boneIdList = []
         self.materialCount = 0
-        self.textures = []
+        self.textures = {}
 
         self.platform = None
         self.is64Bit = [
@@ -162,19 +164,25 @@ class igzFile(object):
             self.is64Bit = self.is64Bit[:10] + [
                 True,  # IG_CORE_PLATFORM_NGP
                 False, # IG_CORE_PLATFORM_ANDROID
-                False, # IG_CORE_PLATFORM_MARMALADE; IG_CORE_PLATFORM_DEPRECATED on Trap Team 0x08
+                False, # IG_CORE_PLATFORM_MARMALADE
             ] # plus DURANGO is IG_CORE_PLATFORM_DEPRECATED
         elif version < 0x09:
-            self.is64Bit[12] = False # IG_CORE_PLATFORM_MARMALADE
+            self.is64Bit[12] = False # IG_CORE_PLATFORM_MARMALADE; IG_CORE_PLATFORM_DEPRECATED on Trap Team
 
         self.arkRegisteredTypes = None
 
-    def __del__(self):
-        self.arkRegisteredTypes = None
-        self.is64Bit = None
-        self.textures = None
+    #def __del__(self):
+    #    self.arkRegisteredTypes = None
+    #    self.is64Bit = None
+    #    self.textures = None
+    #    self.models = None
+    #    self.pointers = None
+    #    self.stringList = None
+    #    self.metatypes = None
+    #    self.thumbnails = None
+    #    self.boneIdList = None
 
-    def loadFile(self, bs):
+    def loadFile(self, bs: NoeBitStream, load_buffers: bool = True):
         bs.seek(8, NOESEEK_ABS)
 
         typeHash = bs.readUInt()
@@ -229,7 +237,7 @@ class igzFile(object):
                     if self.version == 0x09 and bs.tell() % 2 != 0:
                         bs.seek(1, NOESEEK_REL)
                     print('stringList[0x{0:02X}]: {1}'.format(j, self.stringList[j]))
-            elif magic in (IGZ_FU_TMHN, 10, 11):
+            elif load_buffers and magic in (IGZ_FU_TMHN, 10, 11):
                 if len(self.thumbnails) > 0:
                     raise ValueError("Duplicate section found for types TMHN, 10, 11")
                 sizeofRef = 0x10 if self.is64Bit else 0x08
@@ -270,28 +278,28 @@ class igzFile(object):
             # elif magic == 5: for j in range(count): bs.readByte()
             # elif magic == 6: for j in range(min(count, length - 0x18)): bs.readByte()
             # elif magic == 7: for j in range(length - 0x18): bs.readByte() ?
-            # elif magic == 8: for j in range(count): bs.readUInt() # 8 in test file
+            elif magic in (8, IGZ_FU_ROOT):
+                for j in range(count):
+                    self.rootPointers.append(self.fixPointer(bs.readUInt()))
+                    print('Root ID[0x{0:02X}]: {1}'.format(j, self.rootPointers[-1]))
             # elif magic == 9: for j in range(count): root_namesRef = self.process_igDataList(bs, bs.readUInt())
             # elif magic == 12: for j in range(length - 0x18): bs.readByte() or bs.readBytes(count / 10 * 16) ?
             # elif magic == 13: for j in range(count): bs.readUInt(); --bs.readBytes([-1]I)--
             # elif magic == 14: for j in range(count): root_node_namesRef = self.process_igDataList(bs, bs.readUInt())
             # elif magic == 16: for j in range(count + 2): bs.readUShort()
-            elif magic == IGZ_FU_ROOT:
-                for j in range(count):
-                    print('Root ID[0x{0:02X}]: {1}'.format(j, bs.readUInt()))
             elif magic == IGZ_FU_ONAM:
                 for j in range(count):
                     print('ONAM ID[0x{0:02X}]: {1}'.format(j, bs.readUInt()))
-                # is this where the model would start assert(bs.tell() == start + length)?
+                # is this where the model would start? assert(bs.tell() == start + length)
 
             start += length
 
         if dFirstObjectOffset >= 0:
             self.process_igObject(bs, dFirstObjectOffset)
         else:
-            self.process_igObjectList(bs,
-                self.pointers[1].aligned if self.pointers[1]._alignment > 0 else # ?
-                self.pointers[1].Pointer + (0 if self.version == 0x09 else 4))
+            for p in self.rootPointers:
+                self.process_igObjectList(bs, p)
+            #self.pointers[1].Pointer + (0 if self.version == 0x09 else 4)
 
     def isImageFile(self) -> bool:
         return len(self.models) == 0 and len(self.textures) > 0
@@ -306,16 +314,16 @@ class igzFile(object):
         return shouldAddModel
 
     def buildMeshes(self, mdlList):
-        # Textures
-        # WIP: Textures can also be internal. Unknown how to handle that.
-        # WIP: Works for MUA only (external file reference).
-        ifn = rapi.getDirForFilePath(rapi.getInputName())
-        parent = ifn[:ifn[:-1].rfind('\\') + 1]
-        loadedTextures = []
-        loadedMaterial = {mi: [] for mi in range(self.materialCount)}
-        for stringIndex, (textureType, materialIndex) in enumerate(self.textures):
-            if len(self.stringReferences) > 0 and stringIndex < len(self.stringReferences[0]):
-                texPath = parent + self.stringList[self.stringReferences[0][stringIndex]]
+        # Materials (fails using igz because of the same extension)
+        # TODO: Textures can also be internal. Unknown how to handle that.
+        # TODO: Other than just MUA textures (external file reference).
+        noeTexList = []
+        noeMatList = [NoeMaterial('Material{}'.format(i), '') for i in range(self.materialCount)]
+        if False: #len(self.stringReferences) != 0 and self.materialCount != 0:
+            parent = rapi.getDirForFilePath(rapi.getInputName())
+            dir = rapi.getDirForFilePath(parent[:-1])
+            for ref in self.stringReferences[0]:
+                texPath = dir + self.stringList[ref]
                 if rapi.checkFileExists(texPath):
                     with open(texPath, 'rb') as f:
                         imageStream = NoeBitStream(f.read(), IGZ_ENDIANNESS)
@@ -323,11 +331,32 @@ class igzFile(object):
                         version = imageStream.readUInt()
                         if self.version == version and version == 0x06:
                             igzImage = sgIgzFile(version)
-                            igzImage.loadFile(imageStream)
+                            igzImage.loadFile(imageStream, False)
                             if igzImage.isImageFile():
-                                loadedTextures.append(igzImage.textures[0])
-                                loadedMaterial[materialIndex].append((rapi.getExtensionlessName(rapi.getLocalFileName(texPath)), igzImage.textures[0].name, textureType))
-
+                                for h, img in igzImage.textures.items():
+                                    textureType, materialIndex = self.textures[h]
+                                    noeMat = noeMatList[materialIndex]
+                                    if textureType == 0:
+                                        noeMat.name = rapi.getExtensionlessName(rapi.getLocalFileName(texPath))
+                                        noeMat.setTexture(img.name) #noeMat.flags |= noesis.NMATFLAG_DIFFUSE_UV1
+                                    elif textureType == 1:
+                                        noeMat.setNormalTexture(img.name) #noeMat.flags |= noesis.NMATFLAG_NORMAL_UV1
+                                    elif textureType == 2:
+                                        noeMat.setSpecularTexture(img.name) #noeMat.flags |= noesis.NMATFLAG_SPEC_UV1
+                                    else:
+                                        print("Texture type unhandled:", textureType, "; name:", img.name)
+                                        #noeMat.setOpacityTexture(img.name)
+                                        #noeMat.setBumpTexture(img.name)
+                                        #noeMat.setEnvTexture(img.name) 3: cubemap 4: mask
+                                        #noeMat.setOcclTexture(img.name) #noeMat.setFlags2(noesis.NMATFLAG2_OCCL_UV1)
+                                    # TODO: Two problems with textures:
+                                    #   - Non-diffuse crash
+                                    #   - Diffuse don't all work (name issue?) - seems to be better if each mesh gets its own material
+                                    #   - Can crash for other reasons, too (material seeems to be done incorrectly), seems to be less using 64bit Noesis
+                                    #extImg = rapi.loadExternalTex(parent + img.name) # with or without extension?
+                                    #if extImg:
+                                    #    extImg.name = img.name
+                                    #    noeTexList.append(extImg)
         # Models
         startIndex = 0
         numModels = len(self.models)
@@ -336,10 +365,13 @@ class igzFile(object):
             numModels = noesis.userPrompt(noesis.NOEUSERVAL_INT, "Model Count", "Type in the number of models you want to extract (Highest: {0})".format(numModels - startIndex))
 
         for index in range(numModels):
-            print("Building model {0} of {1}".format(index + startIndex + 1, numModels))
-            if len(self.models[index + startIndex].meshes) > 0:
-                mdlList.append(self.models[index+startIndex].build(self.version, index+startIndex, loadedMaterial, loadedTextures))
-        rapi.rpgReset()
+            modelIndex = index + startIndex
+            print("Building model {0} of {1}".format(modelIndex + 1, numModels))
+            model = self.models[modelIndex]
+            if len(model.meshes) == 0: continue
+            mdlList.append(model.build(self.version, modelIndex, noeMatList))
+            rapi.rpgReset()
+            rapi.rpgSetOption(noesis.RPGOPT_BIGENDIAN, IGZ_ENDIANNESS)
 
     def bitAwareSeek(self, bs, baseOffset: int, offset64: int, offset32: int):
         bs.seek(baseOffset + (offset64 if self.is64Bit else offset32), NOESEEK_ABS)
@@ -359,7 +391,7 @@ class igzFile(object):
             bs.seek(0x04, NOESEEK_REL)
         pointer = self.readPointer(bs)
         if pointer == self.pointers[1]:
-            return (0, 0, [])
+            return (0, 0, b'')
         bs.seek(pointer, NOESEEK_ABS)
         memory = bs.readBytes(size)
         return size, pointer, memory
@@ -410,6 +442,13 @@ class igzFile(object):
 
         try:
             metatype = self.metatypes[typeIndex]
+            #_ = bs.readUInt64() if self.is64Bit else bs.readUInt() # MemoryPool?
+            #if metatype.endswith("Buffer"): pass
+            #elif metatype.endswith("List"): pass
+            #else:
+            #    _id = bs.readUInt64() if self.is64Bit else bs.readUInt()
+            #    isAttribute = _id >> 0x10 == 0xFFFF
+            #    name = _id & 0xFFFF if isAttribute else self.stringList[_id]
         except:
             print("got typeIndex:", hex(typeIndex), "@", hex(pointer))
             return None
@@ -425,7 +464,7 @@ class igzFile(object):
     def process_igDataList(self, bs, offset) -> tuple:
         self.bitAwareSeek(bs, offset, 0x0C, 0x08)
         _count    = bs.readUInt()
-        _capacity = bs.readUInt64() if self.is64Bit else bs.readUInt()
+        _capacity = bs.readUInt64() if self.is64Bit else bs.readUInt() # assuming all 64bit systems are LE
         _data = self.readMemoryRef(bs)
         return _count, _capacity, _data
 
@@ -457,8 +496,6 @@ class igzPointer:
     def __init__(self, bs, version):
         # _unknown: type ID?
         self.Pointer, self.Size, self._alignment, self._offset = bs.read(IGZ_ENDIAN_SIGN + '4I')
-        self.aligned = self.Pointer if self._alignment == 0 or version > 0x06 else \
-                       self.Pointer + self._offset # (-self.Pointer % self._alignment) # ??
     def __str__(self) -> str:
         return str(hex(self.Pointer))
     def __eq__(self, i) -> bool:
@@ -542,7 +579,7 @@ class EdgeGeomSpuConfigInfo(object):
         self.numIndexes, \
         self.indexesOffset = unpack_from('>2HI', data, 8)
 
-        # Not part of this struct, but had no where better to put it
+        # Not part of this struct, but had no where better to put it:
         self.skinMatrixOffset0 = 0
         self.skinMatrixOffset1 = 0
         self.skinMatrixSize0 = 0
@@ -728,27 +765,22 @@ class MeshObject(object):
         self.materialIndex = materialIndex
 
     def buildMesh(self, boneMapList):
-        rapi.rpgSetName(self.name)
-
         if self.vertexCount == 0:
             return
-
-        print("name:           {}".format(self.name))
-        print("vertex count:   {}; vertex stride: {}".format(self.vertexCount, hex(self.vertexStrides[0])))
-        print("index count:    {}".format(self.indexCount))
+        #print("name:           {}".format(self.name))
+        #print("vertex count:   {}; vertex stride: {}".format(self.vertexCount, hex(self.vertexStrides[0])))
+        #print("index count:    {}".format(self.indexCount))
         #print("bone map index: {}".format(self.boneMapIndex))
-
         if dBuildBones and -1 < self.boneMapIndex < len(boneMapList) and len(boneMapList[self.boneMapIndex]) > 0:
             rapi.rpgSetBoneMap(boneMapList[self.boneMapIndex])
 
-        processedElements = [False] * 11
+        processedElements = bytearray((0, 0, 1, 1, 0, 0, 0, 1, 0, 1, 1))
         indexableCount = 0
 
         for elem in self.vertexElements:
             if elem._type == 0x2C: continue # UNUSED
-
             if processedElements[elem._usage]: continue
-            processedElements[elem._usage] = True
+            processedElements[elem._usage] = 1
 
             streamOffset = sum(o + (-o % 0x20) for o in (self.vertexStreamS[i] * self.vertexCount for i in range(elem._stream)))
             #print("Getting bytes for stream from", hex(streamOffset), "to", hex(streamOffset + self.vertexCount * self.vertexStreamS[elem._stream]))
@@ -766,6 +798,8 @@ class MeshObject(object):
                   'B{}x'.format(indexSize - 1)
 
             # Triangle strip commonly has sections, but with Alchemy's unique section checkers they have to be processed separately
+            # Or maybe there's an in-built solution?
+            #rapi.rpgSetStripEnder(0xFFFFFFFF if self.indexCount > 0xFFFF else 0xFFFF)
             while processedIndicies < self.indexCount:
                 checker, indexCount = unpack_from('>2H', self.indexBuffer, processedBytes)
                 if checker != 0x9F:
@@ -787,8 +821,6 @@ class MeshObject(object):
         # _spuVertexes0
         # _spuVertexes1
         # _rsxOnlyVertexes
-        rapi.rpgSetName(self.name)
-
         fakeVertexBuffer = None
         if self.vertexStrides[0] == 0:
             fakeVertexBuffer = self.vertexBuffers[0]
@@ -846,8 +878,6 @@ class MeshObject(object):
             rapi.rpgClearBufferBinds()
 
     def buildPs3MeshNew(self, boneMapList, version):
-        rapi.rpgSetName(self.name)
-
         vertexCount = 0
         for segment in self.ps3Segments:
             vertexCount += segment.vertexCount
@@ -986,7 +1016,7 @@ class MeshObject(object):
             bwBuffer = self.vertexBuffers[3][:self.vertexCount:2]
             biBuffer = self.vertexBuffers[3][1:self.vertexCount:2]
             highestIndex = max(biBuffer)
-            biBuffer = bytes(i + (boneMapOffset0 if boneIndex < boneMapSize0 else boneMapOffsetR)
+            biBuffer = bytes(i + (boneMapOffset0 if i < boneMapSize0 else boneMapOffsetR)
                              for i in self.vertexBuffers[3])
                 #print("og:", hex(skinBuffer[i*8+j*2+1]), "; size0:", hex(boneMapSize0), "; offset0:", hex(boneMapOffset0), "; offset1:", hex(boneMapOffset1), "; final:", hex(boneIndex))
             rapi.rpgBindBoneWeightBuffer(bwBuffer, noesis.RPGEODATA_UBYTE, 4, 4)
@@ -1004,6 +1034,40 @@ def fixColours(vcolour):
         for rgb in unpack_from(IGZ_ENDIAN_SIGN + str(count) + 'f', vcolour)])
 #        raw * 12.92 if raw < 0.0031308 else raw ** (1 / 2.4) * 1.055 - 0.055
 
+# It might be necessary to give each mesh its own material, but that doesn't solve crashes
+class MaterialObject(object):
+    diffuse = None
+    normal = None
+    specular = None
+    def addTexture(self, textureType: int, name: str):
+        if textureType == 0:
+            #self.name = rapi.getExtensionlessName(rapi.getLocalFileName(texPath))
+            self.diffuse = name
+        elif textureType == 1:
+            self.normal = name
+        elif textureType == 2:
+            self.specular = name
+        else:
+            print("Texture type unhandled:", textureType, "; name:", name)
+            # 3: cubemap 4: mask
+    def toNoeMaterial(self, meshName: str) -> NoeMaterial:
+        noeMat = NoeMaterial('{}_Material'.format(meshName), '')
+        if not self.diffuse:
+            return noeMat
+        noeMat.setTexture(self.diffuse)
+        #noeMat.flags |= noesis.NMATFLAG_DIFFUSE_UV1
+        if self.normal:
+            noeMat.setNormalTexture(img.normal)
+            #noeMat.flags |= noesis.NMATFLAG_NORMAL_UV1
+        if self.specular:
+            noeMat.setSpecularTexture(img.specular)
+            #noeMat.flags |= noesis.NMATFLAG_SPEC_UV1
+        #noeMat.setOpacityTexture(name)
+        #noeMat.setBumpTexture(name)
+        #noeMat.setEnvTexture(name)
+        #noeMat.setOcclTexture(name)
+        #noeMat.setFlags2(noesis.NMATFLAG2_OCCL_UV1)
+        return noeMat
 
 class ModelObject(object):
     def __init__(self, ID = 0):
@@ -1014,48 +1078,20 @@ class ModelObject(object):
         self.boneMapList = []
         self.anims = []
         self.id = ID
-    def build(self, version: int, modelIndex: int, matList: dict = {}, textures: list = []):
-        rapi.rpgReset()
-        if len(self.meshes) == 0:
-            return NoeModel()
-        rapi.rpgSetOption(noesis.RPGOPT_BIGENDIAN, IGZ_ENDIANNESS)
-        materials = []
-        for m in matList.values():
-            if m:
-                material = NoeMaterial(m[0][0], '')
-                for name, tname, ttype in m:
-                    if ttype == 0:
-                        material.name = name
-                        material.setTexture(tname)
-                    elif ttype == 1:
-                        material.setNormalTexture(tname)
-                    elif ttype == 2:
-                        material.setSpecularTexture(tname)
-                    else:
-                        print("Texture type unhandled:", ttype, "; name:", tname)
-                        #material.setSpecularTexture(tname)
-                        #material.setOpacityTexture(tname)
-                        #material.setBumpTexture(tname)
-                        #material.setEnvTexture(tname)
-                        #material.setOcclTexture(tname)
-                materials.append(material)
+    def build(self, version: int, modelIndex: int, materials: list = [], textures: list = []):
         for i, mesh in enumerate(self.meshes):
             print("Building mesh {0} of {1}".format(i + 1, len(self.meshes)))
-            if not mesh.name:
-                mesh.name = "Mesh_{0}_{1}".format(modelIndex, i)
+            rapi.rpgSetMaterial(materials[mesh.materialIndex].name) # order?
+            rapi.rpgSetName(mesh.name or "Mesh_{0}_{1}".format(modelIndex, i))
             if mesh.isPs3:
                 mesh.buildPs3MeshNew(self.boneMapList, version)
             else:
-                materialName = ''
-                for materialName, *_ in matList[mesh.materialIndex]: break
-                rapi.rpgSetMaterial(materialName) # maybe set material right before committing triangles?
                 mesh.buildMesh(self.boneMapList)
         print("Has {0} bones".format(len(self.boneList)))
         try:
             mdl = rapi.rpgConstructModel()
+            mdl.setModelMaterials(NoeModelMaterials(textures, materials))
             mdl.setBones(self.boneList)
-            if materials and textures:
-                mdl.setModelMaterials(NoeModelMaterials(textures, materials))
             return mdl
         except:
             return NoeModel()
@@ -1067,7 +1103,7 @@ class ModelObject(object):
 class sscIgzFile(igzFile): # 0x09
     def __init__(self, version):
         super().__init__(version)
-        self.arkRegisteredTypes = sscarkRegisteredTypes
+        self.arkRegisteredTypes = sscArkRegisteredTypes
 
     def process_CGraphicsSkinInfo(self, bs, offset):
         self.models.append(ModelObject())
@@ -1211,7 +1247,7 @@ class sscIgzFile(igzFile): # 0x09
         self.models[-1].meshes[-1].platformData = self.readMemoryRef(bs)
         self.bitAwareSeek(bs, offset, 0x30, 0x1C)
         self.models[-1].meshes[-1].platform = bs.readUInt()
-        # + 16/32 bytes (?)
+        # + 16/36 bytes (?)
         self.bitAwareSeek(bs, offset, 0x58, 0x30)
         _size, _offset, _streams = self.readMemoryRef(bs) # individual
         print("Streams offset is", hex(_offset))
@@ -1342,8 +1378,8 @@ commonArkRegisteredTypes = {
     "igPS3EdgeGeometry"       : sscIgzFile.process_igPS3EdgeGeometry,
     "igPS3EdgeGeometrySegment": sscIgzFile.process_igPS3EdgeGeometrySegment
 }
-sscarkRegisteredTypes = commonArkRegisteredTypes.copy()
-sscarkRegisteredTypes.update({
+sscArkRegisteredTypes = commonArkRegisteredTypes.copy()
+sscArkRegisteredTypes.update({
     "CGraphicsSkinInfo"       : sscIgzFile.process_CGraphicsSkinInfo,
     "igModelInfo"             : sscIgzFile.process_igModelInfo,
     "igModelData"             : sscIgzFile.process_igModelData,
@@ -1375,24 +1411,22 @@ class igVertexElement():
         self._packTypeAndFracHint = data[7]
         self._offset, \
         self._freq = unpack_from(IGZ_ENDIAN_SIGN + '2H', data, 8)
-    def loadVBtoNoeBuf(self, vertexBuffer, stride, vertexCount, sOffset):
-        if self._usage in (2, 3, 7, 9, 10): return
-        cc, ct, cs, typ, normalize, vertexMax = sscvertexBufferTypes[self._type]
-        #assert(cc > (2, 2, -1, -1, 2, 1, 0, -1, 0, -1, -1)[self._usage])
+    def loadVBtoNoeBuf(self, vertexBuffer, stride, vertexCount, streamOffset):
+        cc, ct, cs, typ, normalize, vertexMax = sscVertexBufferTypes[self._type]
         newStride = 0
-        offset = sOffset + self._offset
-        packDataType, noeDataType = ('I', noesis.RPGEODATA_UINT) if self._usage == 8 else ('f', noesis.RPGEODATA_FLOAT)
-        if self._type in sscvertexUnpackFunctions:
-            vertexBuffer = sscvertexUnpackFunctions[self._type](vertexBuffer, vertexCount * stride, stride, offset)
+        offset = streamOffset + self._offset
+        if self._usage == 8:
+            # BIBuffer can't be normalized or repacked (must be int)
+            assert(ct not in ('f', 'e'))
+        elif self._type in sscVertexUnpackFunctions:
+            vertexBuffer = sscVertexUnpackFunctions[self._type](vertexBuffer, vertexCount * stride, stride, offset)
             if self._type == 0x30: # UBYTE4_ENDIAN
                 if normalize or self._usage == 5:
-                    vertexBuffer = pack(IGZ_ENDIAN_SIGN + '{0}{1}'.format(
-                            4 * vertexCount, packDataType),
+                    vertexBuffer = pack(IGZ_ENDIAN_SIGN + '{0}f'.format(4 * vertexCount),
                         *[b / vertexMax for i in vertexBuffer])
                     newStride = 0x10
             else:
                 newStride = 0x10
-                assert(self._usage != 8)
         elif self._usage == 0 and self._type == 0x23: # SHORT4N but with scale (superchargersFunkiness)
             vertexBuffer = repack_SHORT4Scale3(vertexBuffer, vertexCount * stride, stride, offset)
             newStride = 0x0C
@@ -1401,18 +1435,18 @@ class igVertexElement():
             newStride = 0x0C
         elif normalize or self._usage == 5 and vertexMax > 1: # TEXCOORD always normalize if not float
             if self._type == 0x18 and self._usage == 5: vertexMax *= 0xFF # UBYTE4_X4
-            vertexBuffer = pack(IGZ_ENDIAN_SIGN + '{0}{1}'.format(cc * vertexCount, packDataType),
+            vertexBuffer = pack(IGZ_ENDIAN_SIGN + '{0}f'.format(cc * vertexCount),
                 *[i / vertexMax for i in unpack_from(IGZ_ENDIAN_SIGN +
                         '{0}{1}{2}x'.format(cc, ct, stride - cc * cs) * vertexCount,
                     vertexBuffer + bytes(stride), offset)])
             newStride = cc * 4
-        elif self._usage == 8:
-            assert(ct not in ('f', 'e'))
         else: # limit unmodified buffers, so Noesis doesn't load excessive vertices
-            vertexBuffer = vertexBuffer[sOffset:sOffset + vertexCount * stride]
+            #if self._usage in (2, 3, 7, 9, 10): return
+            #assert(cc > (2, 2, -1, -1, 2, 1, 0, -1, 0, -1, -1)[self._usage])
+            vertexBuffer = vertexBuffer[streamOffset:streamOffset + vertexCount * stride]
         offset = self._offset
         cc = self._count
-        if newStride: typ, stride, offset, cc = noeDataType, newStride, 0, newStride // 4
+        if newStride: typ, stride, offset, cc = noesis.RPGEODATA_FLOAT, newStride, 0, newStride // 4
 
         if self._usage == 0:
             rapi.rpgBindPositionBufferOfs(vertexBuffer, noesis.RPGEODATA_FLOAT, stride, offset)
@@ -1427,7 +1461,7 @@ class igVertexElement():
         elif self._usage == 8 and dBuildBones:
             rapi.rpgBindBoneIndexBufferOfs(vertexBuffer, typ, stride, offset, cc)
 
-sscvertexUnpackFunctions = {
+sscVertexUnpackFunctions = {
     0x05: repack_UBYTE4N_COLOR_ARGB,
     0x08: repack_UBYTE2N_COLOR_5650,
     0x09: repack_UBYTE2N_COLOR_5551,
@@ -1437,7 +1471,7 @@ sscvertexUnpackFunctions = {
     0x33: repack_UBYTE2N_COLOR_5650#_RGB
 }
 # WIP: Count seems to match igVertexElement._count
-sscvertexBufferTypes = {
+sscVertexBufferTypes = {
     0x00: (1, 'f', 4, noesis.RPGEODATA_FLOAT,    0, 1),          # FLOAT1
     0x01: (2, 'f', 4, noesis.RPGEODATA_FLOAT,    0, 1),          # FLOAT2
     0x02: (3, 'f', 4, noesis.RPGEODATA_FLOAT,    0, 1),          # FLOAT3
@@ -1680,7 +1714,7 @@ class sgIgzFile(igzFile): # 0x06
         self.bitAwareSeek(bs, offset, 0x10, 0x08)
         _count    = bs.readUInt()
         _capacity = bs.readUInt()
-        #self.bitAwareSeek(bs, pointer.aligned, 0x18, 0x10) # here already
+        #self.bitAwareSeek(bs, self.rootPointers[0], 0x18, 0x10) # here already
         return _count, _capacity, self.readMemoryRef(bs)
 
     def process_igIntList(self, bs, offset) -> tuple:
@@ -1780,7 +1814,7 @@ class sgIgzFile(igzFile): # 0x06
                 IGZ_ENDIAN_SIGN + str(_count) + ('Q' if self.is64Bit else 'I'),
                 refList))
 
-    def process_igMaterialAttr(self, bs=None, offset=None):
+    def process_igMaterialAttr(self, *args):
         self.materialCount += 1
 
     def process_igMuaMaterialAttr(self, bs, offset):
@@ -1790,35 +1824,63 @@ class sgIgzFile(igzFile): # 0x06
     def process_igSceneTexturesInfo(self, bs, offset):
         # process_igNamedObject
         self.bitAwareSeek(bs, offset, 0x20, 0x10) # 32 unconfirmed
-        for p in tuple(self.readPointer(bs) for _ in range(bs.readUInt64() if self.is64Bit else bs.readUInt())):
+        for p in (self.readPointer(bs) for _ in range(bs.readUInt64() if self.is64Bit else bs.readUInt())):
             _ = self.process_igObject(bs, p)
 
     def process_igTextureBindAttr2(self, bs, offset):
         self.bitAwareSeek(bs, offset, 0x10, 0x08)
-        textureType = bs.readUShort()
-        #self.bitAwareSeek(bs, offset, 0x18, 0x0C)
-        #self.process_igTextureAttr2(bs, self.readPointer(bs))
+        _unitID = (bs.readUInt64() if self.is64Bit else bs.readUInt()) & 0xFFFF
+        _hash = self.process_igObject(bs, self.readPointer(bs)) # igTextureAttr2
         # Theoretically, the meshes would be lower in the hierarchy, but this script parses geometry attributes before texture attributes
-        self.textures.append((textureType, self.materialCount - 1))
+        self.textures[_hash] = (_unitID, self.materialCount - 1)
 
-    #def process_igTextureAttr2(self, bs, offset):
-    #    self.bitAwareSeek(bs, offset, 0x10, 0x08)
-    #    # 2* unk + 3*0 + 5 - 10 int properties (wrap, tile, etc) + 2x dimensions?
-    #    bs.read(IGZ_ENDIAN_SIGN + '2H13I4H')
+    def process_igTextureAttr2(self, bs, offset):
+        #self.bitAwareSeek(bs, offset, 0x10, 0x08)
+        #_unitID = (bs.readUInt64() if self.is64Bit else bs.readUInt()) & 0xFFFF
+        # 12I: 0, 0, 5 - 10, 9 * properties (wrap, tile, etc)
+        self.bitAwareSeek(bs, offset, 0x48, 0x3C)
+        return bs.readUInt64() # hash (how long on 32bit?)
 
-    def process_igImage2(self, bs, offset):
-        #texture path?
-        self.bitAwareSeek(bs, offset, 0x18, 0x0C)
-        imgWidth, imgHeight, _, _ = bs.read(IGZ_ENDIAN_SIGN + '4H')
-        # unknown (total 0x30): readMemoryRefHandle?, other small numbers, flags?
-        if self.textureFormat:
-            self.textures.append(NoeTexture(rapi.getLocalFileName(self.stringList[0]),
-                                 imgWidth, imgHeight,
-                                 rapi.imageDecodeDXT(self.thumbnails[0][2],
-                                                     imgWidth, imgHeight,
-                                                     noesis.FOURCC_ATI2)
-                                 if self.textureFormat == noesis.NOESISTEX_RGBA32 else
-                                 self.thumbnails[0][2], self.textureFormat))
+
+    def process_igHandleList(self, bs, offset) -> bytes:
+        # igDataList? | _count? (TODO)
+        self.bitAwareSeek(bs, offset, 0x10, 0x08)
+        _count    = bs.readUInt()
+        _capacity = bs.readUInt()
+        _, _, handle = self.readMemoryRef(bs)
+        return handle
+
+    def process_igImage2(self, bs, offset): # TODO: Non-MUA?
+        _hash = 0
+        _hb = self.process_igHandleList(bs, (offset + 0x50 if self.is64Bit else 0x30))
+        if _hb: _hash, = unpack_from(IGZ_ENDIAN_SIGN + 'Q', _hb, 0)
+        self.bitAwareSeek(bs, offset, 0x10, 0x08)
+        _pNameString = self.stringList[bs.readUInt64() if self.is64Bit else bs.readUInt()] # self.readString(bs)
+        if dLoadAsImage:
+            if not self.textureFormat or len(self.thumbnails) == 0: return
+            data_size, _, texture_data = self.thumbnails[0] # TODO: index in igImage2 node?
+            if data_size == 0: return
+            imgWidth, imgHeight, _, _ = bs.read(IGZ_ENDIAN_SIGN + '4H') #wrap, filter?
+            #if imgWidth == 0 or imgHeight == 0 or (self.textureFormat == noesis.NOESISTEX_RGBA32 and ((imgWidth * imgHeight) // 2) < data_size): return
+            texture_data = rapi.imageFlipRGBA32(
+                rapi.imageDecodeRaw(texture_data,
+                    imgWidth, imgHeight, "b8g8r8a8")
+                        if self.textureFormat == 'b8g8r8a8' else
+                rapi.imageDecodeDXT(texture_data,
+                    imgWidth, imgHeight, self.textureFormat),
+                imgWidth, imgHeight, 0, 1)
+            _ = bs.readUInt() # count?
+            # TODO: igDataList? but weird...
+            _count    = bs.readUInt()
+            _capacity = bs.readUInt()
+            if _count != 0: return # TODO
+            #noeTex.setFlags(noesis.NTEXFLAG_FILTER_NEAREST | noesis.NTEXFLAG_WRAP_SEP_ST | noesis.NTEXFLAG_WRAP_CLAMP) #noesis.NTEXFLAG_WRAP_REPEAT | noesis.NTEXFLAG_WRAP_T_CLAMP
+            self.textures[_hash] = NoeTexture(
+                rapi.getLocalFileName(_pNameString),
+                imgWidth, imgHeight,
+                texture_data, noesis.NOESISTEX_RGBA32)
+        else:
+            self.textures[_hash] = NoeTexture(rapi.getLocalFileName(_pNameString), 0, 0, [], noesis.NOESISTEX_RGBA32)
 
 oldArkRegisteredTypes = commonArkRegisteredTypes.copy()
 oldArkRegisteredTypes.update({
@@ -1852,6 +1914,7 @@ sgarkRegisteredTypes["igIndexBuffer"] = sgIgzFile.process_igIndexBuffer
 sgarkRegisteredTypes["igStringRefList"] = sgIgzFile.process_igStringRefList
 sgarkRegisteredTypes["igSceneTexturesInfo"] = sgIgzFile.process_igSceneTexturesInfo
 sgarkRegisteredTypes["igTextureBindAttr2"] = sgIgzFile.process_igTextureBindAttr2
+sgarkRegisteredTypes["igTextureAttr2"] = sgIgzFile.process_igTextureAttr2
 sgarkRegisteredTypes["igMaterialAttr"] = sgIgzFile.process_igMaterialAttr
 sgarkRegisteredTypes["igMuaMaterialAttr"] = sgIgzFile.process_igMuaMaterialAttr
 sgarkRegisteredTypes["igImage2"] = sgIgzFile.process_igImage2
@@ -1861,7 +1924,7 @@ sgarkRegisteredTypes["igGeometry"] = ssfIgzFile.process_igGeometry
 sgarkRegisteredTypes["asAnimationDatabase"] = ssfIgzFile.process_asAnimationDatabase
 sgarkRegisteredTypes["igTransform"] = ssfIgzFile.process_igTransform
 sgarkRegisteredTypes["igIntListList"] = igzFile.process_igObjectList # ?
-# igNonRefCountedNodeList (seemingly 0 content in igGroup pair with igNodeList); igColorAttr (mat.setDiffuseColor, setSpecularColor, setAmbientColor, setEnvColor, ...); igMuaMaterialAttr; igTextureStateAttr; igTextureAttr2; igGlobalColorStateAttr; igBlendFunctionAttr; igBlendStateAttr; igAlphaFunctionAttr; igAlphaStateAttr; igHandleList = igDataList
+# igNonRefCountedNodeList (seemingly 0 content in igGroup pair with igNodeList); igColorAttr (mat.setDiffuseColor, setSpecularColor, setAmbientColor, setEnvColor, ...); igMuaMaterialAttr; igTextureStateAttr; igGlobalColorStateAttr; igBlendFunctionAttr; igBlendStateAttr; igAlphaFunctionAttr; igAlphaStateAttr; igHandleList = igDataList
 # igTransformSequence1_5, igVec3fList, igQuaternionfList, igLongList, igTextureMatrixStateAttr, igVertexBlendStateAttr
 # state attributes are a simple boolean (0 or 1) at rel offset 0x18/0x0C
 

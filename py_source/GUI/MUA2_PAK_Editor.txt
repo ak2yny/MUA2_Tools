@@ -6,22 +6,22 @@ VSVersionInfo(
   ffi=FixedFileInfo(
     # filevers and prodvers should be always a tuple with four items: (1, 2, 3, 4)
     # Set not needed items to zero 0.
-    filevers=(1, 1, 0, 0),
-    prodvers=(1, 1, 0, 0),
+    filevers=(0, 1, 0, 0),
+    prodvers=(0, 1, 0, 0),
     ),
   kids=[
     StringFileInfo(
       [
       StringTable(
         '040904B0',
-        [StringStruct('FileVersion', '1.1'),
+        [StringStruct('FileVersion', '0.1'),
         StringStruct('CompanyName', 'ak2yny'),
         StringStruct('FileDescription', 'MUA2 .pak file extractor and combiner'),
-        StringStruct('OriginalFilename', 'MUA2_PAK.py'),
-        StringStruct('InternalName', 'MUA2_PAK'),
-        StringStruct('LegalCopyright', '2025'),
-        StringStruct('ProductName', 'MUA2 PAK Extractor'),
-        StringStruct('ProductVersion', '1.1')])
+        StringStruct('OriginalFilename', 'MUA2_PAK_Editor.py'),
+        StringStruct('InternalName', 'mua2_editor_gui'),
+        StringStruct('LegalCopyright', '2026'),
+        StringStruct('ProductName', 'MUA2 PAK Editor'),
+        StringStruct('ProductVersion', '0.1')])
       ]), 
     VarFileInfo([VarStruct('Translation', [1033, 1200])])
   ]

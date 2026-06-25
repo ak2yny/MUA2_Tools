@@ -1,3 +1,6 @@
+# local files
+*.lnk
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -8,23 +11,25 @@ __pycache__/
 
 # Distribution / packaging
 .Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-share/python-wheels/
+py_source/build/
+py_source/develop-eggs/
+py_source/dist/
+py_source/downloads/
+py_source/eggs/
+py_source/.eggs/
+py_source/lib/
+py_source/lib64/
+py_source/parts/
+py_source/sdist/
+py_source/var/
+py_source/wheels/
+py_source/share/python-wheels/
 *.egg-info/
 .installed.cfg
 *.egg
 MANIFEST
+*.exe
+*.dll
 
 # PyInstaller
 #  Usually these files are written by a python script from a template
