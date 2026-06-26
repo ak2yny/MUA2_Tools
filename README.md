@@ -12,3 +12,9 @@ A set of Python scripts and tools for modding Marvel Ultimate Alliance 2
 
 ### Info
 This is a temporary repository with the ultimate goal to have tools that allow modding the Steam version of MUA2.
+
+### Links
+- [MUA2 tools backup](https://drive.google.com/drive/u/0/folders/14AmyeGECg6bvXu7u7pCHF6G3gb2OdIp9) (incl. nikita488's and official tools)
+- ARD: [Alchemist](https://youtu.be/kxfoz62aKL8)
+- UltraMegaMagnus & AI: Python code and CTk design
+- https://github.com/AdventureT/IgzModelConverter
