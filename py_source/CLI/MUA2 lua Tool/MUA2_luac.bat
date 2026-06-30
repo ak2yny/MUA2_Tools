@@ -6,10 +6,10 @@ REM ----------------------------------------------------------------------------
 REM Settings:
 
 REM FbxToIgz; unluac; luac
-set operation=FbxToIgz
+set operation=luac
 set inext=.xml, .txt
 set delInputFiles=false
-set recursive=false
+set recursive=true
 
 set texturepath=materials/actors
 

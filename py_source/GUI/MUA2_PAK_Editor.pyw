@@ -43,7 +43,7 @@ from pathlib import Path
 from struct import pack, pack_into, iter_unpack, unpack_from
 from subprocess import run
 from threading import Thread
-from tkinter import filedialog, messagebox, Listbox, StringVar
+from tkinter import filedialog, messagebox, IntVar, Listbox, StringVar
 from tkinter.ttk import Style, Treeview
 from customtkinter import *
 
@@ -387,6 +387,7 @@ class MUA2GUI(CTk):
         self._prop_showing: str = ''
         self._selected_index: int = 0
         self._filter_text = StringVar()
+        self._quality_mpeg = IntVar(self, 160)
         #self._filter_text.trace_add('write', lambda *_: self._apply_filter())
 
         AppearanceModeTracker.add(self._set_treeview_theme)
@@ -518,6 +519,9 @@ class MUA2GUI(CTk):
                   text_color=C_BG, **btn_cfg
                   )
         self._b_rfsbm.pack(fill='x', padx=14, pady=4)
+
+        CTkLabel(inner, font=font_default, textvariable=self._quality_mpeg).pack(fill='x', padx=14, pady=(4,0))
+        CTkSlider(inner, from_=0, to=320, number_of_steps=10, variable=self._quality_mpeg).pack(fill='x', padx=14, pady=(0,8))
 
         CTkLabel(inner, text='Whole PAK',
                  font=font_title2, text_color=C_ACCENT
@@ -691,6 +695,7 @@ class MUA2GUI(CTk):
         count = 0
         a = root.find('object[@type="CAudioArchive"]')
         if a is None: # checking "if not a:" is deprecated
+            self._quality_mpeg.set(224)
             for md in get_list_elements(root.find('object[@type="CMusicDefinitionList"]'), root):
                 #CMusicDefinition
                 name = md.get('refname') #or md.get('buildInfo')[1] or [0] or md.find('var[@name="_name"]').get('value') or original_wav_name
@@ -700,6 +705,7 @@ class MUA2GUI(CTk):
                 self.treeview.insert('root', 'end', f'music::{name}', text=name)
                 count += 1
         else:
+            #self._quality_mpeg.set(160)
             #name = a.find('var[@name="_name"]').get('value')
             #other attributes: _protectionName (root_name simplified?), _protectionCategory, _default ('True', common banks)
             file, ref = a.find('var[@name="_soundList"]').get('ref').split('.')
@@ -1064,7 +1070,7 @@ class MUA2GUI(CTk):
     def _read_fsb(self, path: Path, index: int) -> Path:
         if path.suffix.lower() != '.fsb':
             #'fsbankexcl' instead of FSBANKEXCL
-            run([FSBANKEXCL, '-o', path.with_suffix('.fsb'), path, '-format', 'MP2', '-quality', '70', '-build_mode', 'i', '-cache_dir', 'cache/'], check=True)
+            run([FSBANKEXCL, '-o', path.with_suffix('.fsb'), path, '-format', 'MP2', '-quality', self._quality_mpeg.get() * 100 // 320, '-build_mode', 'i', '-cache_dir', 'cache/'], check=True)
             path = path.with_suffix('.fsb')
         with path.open('rb') as fsb:
             self._fsbs[index] = fsb5_parse(fsb, 0, self._pak)

@@ -58,13 +58,16 @@ IGZ_IMG_FORMAT = { # Wrong, but works; doesn't depend on bitwidth?
 }
 
 def registerNoesisTypes():
-    igzHandle = noesis.register("Skylanders Superchargers", ".igz;.bld")
+    igzHandle = noesis.register("Alchemy IGZ", ".igz;.bld")
     noesis.setHandlerTypeCheck(igzHandle, alchemyigzCheckType)
     if dLoadAsImage:
         noesis.setHandlerLoadRGBA(igzHandle, alchemyigzLoadRGBA)
     else:
         noesis.setHandlerLoadModel(igzHandle, alchemyigzLoadModel)
-    noesis.logPopup()
+    # Adding option doesn't work, for images, because it's already registered to models
+	#noesis.addOption(igzHandle, "-t", "load .igz as image.", 0)
+    #noesis.optWasInvoked("-t")
+    #noesis.logPopup()
     return 1
 
 def alchemyigzCheckType(data):
@@ -182,7 +185,7 @@ class igzFile(object):
     #    self.thumbnails = None
     #    self.boneIdList = None
 
-    def loadFile(self, bs: NoeBitStream, load_buffers: bool = True):
+    def loadFile(self, bs: NoeBitStream):
         bs.seek(8, NOESEEK_ABS)
 
         typeHash = bs.readUInt()
@@ -237,7 +240,7 @@ class igzFile(object):
                     if self.version == 0x09 and bs.tell() % 2 != 0:
                         bs.seek(1, NOESEEK_REL)
                     print('stringList[0x{0:02X}]: {1}'.format(j, self.stringList[j]))
-            elif load_buffers and magic in (IGZ_FU_TMHN, 10, 11):
+            elif magic in (IGZ_FU_TMHN, 10, 11):
                 if len(self.thumbnails) > 0:
                     raise ValueError("Duplicate section found for types TMHN, 10, 11")
                 sizeofRef = 0x10 if self.is64Bit else 0x08
@@ -316,10 +319,14 @@ class igzFile(object):
     def buildMeshes(self, mdlList):
         # Materials (fails using igz because of the same extension)
         # TODO: Textures can also be internal. Unknown how to handle that.
-        # TODO: Other than just MUA textures (external file reference).
-        noeTexList = []
+        #       Other than just MUA textures (external file reference).
         noeMatList = [NoeMaterial('Material{}'.format(i), '') for i in range(self.materialCount)]
         if False: #len(self.stringReferences) != 0 and self.materialCount != 0:
+            # TODO: Problems with textures (why it's diabled with False):
+            #   - Non-diffuse crash
+            #   - Diffuse don't all work (name issue?) - seems to be better if each mesh gets its own material
+            #   - Can crash for other reasons, too (material seeems to be done incorrectly), seems to crash less using 64bit Noesis
+
             parent = rapi.getDirForFilePath(rapi.getInputName())
             dir = rapi.getDirForFilePath(parent[:-1])
             for ref in self.stringReferences[0]:
@@ -331,31 +338,28 @@ class igzFile(object):
                         version = imageStream.readUInt()
                         if self.version == version and version == 0x06:
                             igzImage = sgIgzFile(version)
-                            igzImage.loadFile(imageStream, False)
+                            igzImage.loadFile(imageStream)
                             if igzImage.isImageFile():
-                                for h, img in igzImage.textures.items():
+                                for h, tex_name in igzImage.textures.items():
                                     textureType, materialIndex = self.textures[h]
                                     noeMat = noeMatList[materialIndex]
                                     if textureType == 0:
                                         noeMat.name = rapi.getExtensionlessName(rapi.getLocalFileName(texPath))
-                                        noeMat.setTexture(img.name) #noeMat.flags |= noesis.NMATFLAG_DIFFUSE_UV1
+                                        noeMat.setTexture(tex_name) #noeMat.flags |= noesis.NMATFLAG_DIFFUSE_UV1
                                     elif textureType == 1:
-                                        noeMat.setNormalTexture(img.name) #noeMat.flags |= noesis.NMATFLAG_NORMAL_UV1
+                                        noeMat.setNormalTexture(tex_name) #noeMat.flags |= noesis.NMATFLAG_NORMAL_UV1
                                     elif textureType == 2:
-                                        noeMat.setSpecularTexture(img.name) #noeMat.flags |= noesis.NMATFLAG_SPEC_UV1
+                                        noeMat.setSpecularTexture(tex_name) #noeMat.flags |= noesis.NMATFLAG_SPEC_UV1
                                     else:
-                                        print("Texture type unhandled:", textureType, "; name:", img.name)
-                                        #noeMat.setOpacityTexture(img.name)
-                                        #noeMat.setBumpTexture(img.name)
-                                        #noeMat.setEnvTexture(img.name) 3: cubemap 4: mask
-                                        #noeMat.setOcclTexture(img.name) #noeMat.setFlags2(noesis.NMATFLAG2_OCCL_UV1)
-                                    # TODO: Two problems with textures:
-                                    #   - Non-diffuse crash
-                                    #   - Diffuse don't all work (name issue?) - seems to be better if each mesh gets its own material
-                                    #   - Can crash for other reasons, too (material seeems to be done incorrectly), seems to be less using 64bit Noesis
-                                    #extImg = rapi.loadExternalTex(parent + img.name) # with or without extension?
+                                        print("Texture type unhandled:", textureType, "; name:", tex_name)
+                                        #noeMat.setOpacityTexture(tex_name)
+                                        #noeMat.setBumpTexture(tex_name)
+                                        #noeMat.setEnvTexture(tex_name) 3: cubemap 4: mask
+                                        #noeMat.setOcclTexture(tex_name) #noeMat.setFlags2(noesis.NMATFLAG2_OCCL_UV1)
+
+                                    # Setting texture names in materials makes Noesis automatically load existing local images by default. This is not needed:
+                                    #extImg = rapi.loadExternalTex(parent + tex_name) # with or without extension?
                                     #if extImg:
-                                    #    extImg.name = img.name
                                     #    noeTexList.append(extImg)
         # Models
         startIndex = 0
@@ -1079,6 +1083,7 @@ class ModelObject(object):
         self.anims = []
         self.id = ID
     def build(self, version: int, modelIndex: int, materials: list = [], textures: list = []):
+        #rapi.rpgReset() #rapi.rpgSetOption(noesis.RPGOPT_BIGENDIAN, IGZ_ENDIANNESS)
         for i, mesh in enumerate(self.meshes):
             print("Building mesh {0} of {1}".format(i + 1, len(self.meshes)))
             rapi.rpgSetMaterial(materials[mesh.materialIndex].name) # order?
@@ -1537,8 +1542,16 @@ class ssfIgzFile(igzFile): # 0x07
 
     def process_igSceneInfo(self, bs, offset):
         self.models.append(ModelObject())
-        self.bitAwareSeek(bs, offset, 0x00, 0x14)
-        _sceneGraph = self.process_igObject(bs, self.readPointer(bs))
+        # 2 x 3264 (both zeroes?, name + ?) + 3264 (one? _resolveState?)
+        self.bitAwareSeek(bs, offset, 0x28, 0x14)
+        _sceneGraph = self.process_igObject(bs, self.readPointer(bs)) #igAttrSet
+        #_textures = self.process_igObject(bs, self.readPointer(bs))
+        #_cameras = self.process_igObject(bs, self.readPointer(bs))
+        #_animationBegin = bs.readUInt64() if self.is64Bit else bs.readUInt()
+        #_animationEnd = bs.readUInt64() if self.is64Bit else bs.readUInt()
+        #_upVector = self.readVector3 + padding (4 bytes)?
+        #_sceneGraphList = self.process_igObject(bs, self.readPointer(bs)) # igNodeList/igObjectList
+        #_unknown = self.process_igObject(bs, self.readPointer(bs))
 
     def process_igTransform(self, bs, offset):
         # int (25) + 0
@@ -1794,9 +1807,9 @@ class sgIgzFile(igzFile): # 0x06
         self.bitAwareSeek(bs, offset, 0x30, 0x1C)
         self.models[-1].meshes[-1].primType = (
             noesis.RPGEO_POINTS,
-            noesis.RPGEO_TRIANGLE_STRIP, # unconfirmed
-            noesis.RPGEO_TRIANGLE
-            #noesis.RPGEO_TRIANGLE ?
+            noesis.RPGEO_TRIANGLE, #
+            noesis.RPGEO_TRIANGLE  # unknown difference
+            #noesis.RPGEO_TRIANGLE_STRIP ?
             #'IGZ_TRIANGLE_STRIP'
             #noesis.RPGEO_TRIANGLE_FAN
             #noesis.RPGEO_TRIANGLE_QUADS
@@ -1856,31 +1869,33 @@ class sgIgzFile(igzFile): # 0x06
         if _hb: _hash, = unpack_from(IGZ_ENDIAN_SIGN + 'Q', _hb, 0)
         self.bitAwareSeek(bs, offset, 0x10, 0x08)
         _pNameString = self.stringList[bs.readUInt64() if self.is64Bit else bs.readUInt()] # self.readString(bs)
+        if not self.textureFormat or len(self.thumbnails) == 0: return
+        data_size, _, texture_data = self.thumbnails[0] # TODO: index in igImage2 node?
+        if data_size == 0: return
+        imgWidth, imgHeight, _, _ = bs.read(IGZ_ENDIAN_SIGN + '4H') #wrap, filter?
+        #if imgWidth == 0 or imgHeight == 0 or (self.textureFormat == noesis.NOESISTEX_RGBA32 and ((imgWidth * imgHeight) // 2) < data_size): return
+        _ = bs.readUInt() # count?
+        # TODO: igDataList? but weird...
+        _count    = bs.readUInt()
+        _capacity = bs.readUInt()
+        if _count != 0: return # TODO
+        texture_data = rapi.imageFlipRGBA32(
+            rapi.imageDecodeRaw(texture_data,
+                imgWidth, imgHeight, "b8g8r8a8")
+                    if self.textureFormat == 'b8g8r8a8' else
+            rapi.imageDecodeDXT(texture_data,
+                imgWidth, imgHeight, self.textureFormat),
+            imgWidth, imgHeight, 0, 1)
+        tex_name = rapi.getLocalFileName(_pNameString)
+        noe_tex  = NoeTexture(tex_name,
+                              imgWidth, imgHeight,
+                              texture_data, noesis.NOESISTEX_RGBA32)
+        #noe_tex.setFlags(noesis.NTEXFLAG_FILTER_NEAREST | noesis.NTEXFLAG_WRAP_SEP_ST | noesis.NTEXFLAG_WRAP_CLAMP) #noesis.NTEXFLAG_WRAP_REPEAT | noesis.NTEXFLAG_WRAP_T_CLAMP
         if dLoadAsImage:
-            if not self.textureFormat or len(self.thumbnails) == 0: return
-            data_size, _, texture_data = self.thumbnails[0] # TODO: index in igImage2 node?
-            if data_size == 0: return
-            imgWidth, imgHeight, _, _ = bs.read(IGZ_ENDIAN_SIGN + '4H') #wrap, filter?
-            #if imgWidth == 0 or imgHeight == 0 or (self.textureFormat == noesis.NOESISTEX_RGBA32 and ((imgWidth * imgHeight) // 2) < data_size): return
-            texture_data = rapi.imageFlipRGBA32(
-                rapi.imageDecodeRaw(texture_data,
-                    imgWidth, imgHeight, "b8g8r8a8")
-                        if self.textureFormat == 'b8g8r8a8' else
-                rapi.imageDecodeDXT(texture_data,
-                    imgWidth, imgHeight, self.textureFormat),
-                imgWidth, imgHeight, 0, 1)
-            _ = bs.readUInt() # count?
-            # TODO: igDataList? but weird...
-            _count    = bs.readUInt()
-            _capacity = bs.readUInt()
-            if _count != 0: return # TODO
-            #noeTex.setFlags(noesis.NTEXFLAG_FILTER_NEAREST | noesis.NTEXFLAG_WRAP_SEP_ST | noesis.NTEXFLAG_WRAP_CLAMP) #noesis.NTEXFLAG_WRAP_REPEAT | noesis.NTEXFLAG_WRAP_T_CLAMP
-            self.textures[_hash] = NoeTexture(
-                rapi.getLocalFileName(_pNameString),
-                imgWidth, imgHeight,
-                texture_data, noesis.NOESISTEX_RGBA32)
+            self.textures[_hash] = noe_tex
         else:
-            self.textures[_hash] = NoeTexture(rapi.getLocalFileName(_pNameString), 0, 0, [], noesis.NOESISTEX_RGBA32)
+            saveImageRGBA(tex_name, noe_tex)
+            self.textures[_hash] = tex_name
 
 oldArkRegisteredTypes = commonArkRegisteredTypes.copy()
 oldArkRegisteredTypes.update({
